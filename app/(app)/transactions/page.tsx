@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, Fragment } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Transaction, CATEGORIES, Category } from '@/types'
 import { formatKRW, formatDate } from '@/lib/utils/format'
 import EmptyState from '@/components/EmptyState'
@@ -33,9 +34,10 @@ export default function TransactionsPage() {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
 
+  const searchParams = useSearchParams()
   const [search, setSearch] = useState('')
-  const [month, setMonth] = useState('')
-  const [category, setCategory] = useState('')
+  const [month, setMonth] = useState(() => searchParams.get('month') ?? '')
+  const [category, setCategory] = useState(() => searchParams.get('category') ?? '')
   const [type, setType] = useState('')
 
   const [editingId, setEditingId] = useState<string | null>(null)

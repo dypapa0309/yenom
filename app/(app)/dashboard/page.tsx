@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
@@ -27,10 +28,15 @@ function getMonthOptions() {
 }
 
 export default function DashboardPage() {
+  const router = useRouter()
   const [month, setMonth] = useState(currentMonth())
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [empty, setEmpty] = useState(false)
+
+  function goToCategory(category: string) {
+    router.push(`/transactions?category=${encodeURIComponent(category)}&month=${month}`)
+  }
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -181,6 +187,9 @@ export default function DashboardPage() {
                     innerRadius={45}
                     outerRadius={80}
                     strokeWidth={0}
+                    style={{ cursor: 'pointer' }}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    onClick={(d: any) => goToCategory(d.category)}
                   >
                     {data.categoryStats.slice(0, 6).map((_, i) => (
                       <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -194,7 +203,11 @@ export default function DashboardPage() {
               </ResponsiveContainer>
               <div className="flex-1 space-y-1.5">
                 {data.categoryStats.slice(0, 6).map((s, i) => (
-                  <div key={s.category} className="flex items-center justify-between text-xs">
+                  <div
+                    key={s.category}
+                    className="flex items-center justify-between text-xs cursor-pointer hover:opacity-60 transition-opacity"
+                    onClick={() => goToCategory(s.category)}
+                  >
                     <div className="flex items-center gap-1.5">
                       <div className="w-2 h-2 rounded-full" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
                       <span className="text-[#374151]">{s.category}</span>
@@ -278,7 +291,11 @@ export default function DashboardPage() {
           <h3 className="text-sm font-semibold text-[#111111] mb-3">지출 상위 카테고리</h3>
           <div className="space-y-2">
             {data.categoryStats.slice(0, 4).map((s, i) => (
-              <div key={s.category} className="flex justify-between items-center">
+              <div
+                key={s.category}
+                className="flex justify-between items-center cursor-pointer hover:opacity-60 transition-opacity"
+                onClick={() => goToCategory(s.category)}
+              >
                 <span className="text-sm text-[#374151]">{s.category}</span>
                 <div className="text-right">
                   <span className="text-sm font-semibold text-[#111111] num">{formatKRW(s.amount)}</span>
