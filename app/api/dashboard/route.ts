@@ -6,6 +6,7 @@ import { currentMonth } from '@/lib/utils/format'
 import { getHouseholdContext } from '@/lib/supabase/household'
 
 export async function GET(request: NextRequest) {
+  try {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -51,4 +52,8 @@ export async function GET(request: NextRequest) {
   dashboardData.recurringItems = detectRecurring(allTxs).slice(0, 8)
 
   return NextResponse.json({ data: dashboardData, month, isShared: hCtx.partnerIds.length > 0 })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 }

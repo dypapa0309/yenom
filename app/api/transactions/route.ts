@@ -4,6 +4,7 @@ import { getHouseholdContext } from '@/lib/supabase/household'
 import { Transaction } from '@/types'
 
 export async function GET(request: NextRequest) {
+  try {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -56,6 +57,10 @@ export async function GET(request: NextRequest) {
   const paginated = allData.slice(from, from + pageSize)
 
   return NextResponse.json({ data: paginated, count, page, pageSize })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 }
 
 // merchant_name 또는 description 기준으로 전체 제외/복원
