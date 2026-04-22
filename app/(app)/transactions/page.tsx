@@ -85,6 +85,21 @@ export default function TransactionsPage() {
     setEditingId(null)
   }
 
+  async function excludeAllByMerchant(tx: Transaction) {
+    const key = tx.merchant_name ?? tx.description
+    await fetch('/api/transactions', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        tx.merchant_name
+          ? { merchant_name: tx.merchant_name, excluded: true }
+          : { description: tx.description, excluded: true }
+      ),
+    })
+    setEditingId(null)
+    fetchTransactions()
+  }
+
   function startEdit(tx: Transaction) {
     setEditingId(tx.id)
     setEditCategory(tx.category)
@@ -281,7 +296,7 @@ export default function TransactionsPage() {
                   {editingId === tx.id && (
                     <tr className="bg-[#F9FAFB] border-b border-[#F3F4F6]">
                       <td colSpan={7} className="px-4 py-2.5">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-3">
                           <label className="text-xs text-[#6B7280]">메모</label>
                           <Input
                             value={editMemo}
@@ -289,6 +304,12 @@ export default function TransactionsPage() {
                             placeholder="메모 입력..."
                             className="h-6 text-xs max-w-sm"
                           />
+                          <button
+                            onClick={() => excludeAllByMerchant(tx)}
+                            className="text-xs text-[#9CA3AF] hover:text-red-500 transition-colors whitespace-nowrap ml-auto"
+                          >
+                            &apos;{tx.merchant_name ?? tx.description}&apos; 전체 제외
+                          </button>
                         </div>
                       </td>
                     </tr>

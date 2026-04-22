@@ -50,6 +50,32 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ data, count, page, pageSize })
 }
 
+// merchant_name 또는 description 기준으로 전체 제외/복원
+export async function PATCH(request: NextRequest) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { merchant_name, description, excluded } = await request.json()
+
+  let query = supabase
+    .from('transactions')
+    .update({ excluded })
+    .eq('user_id', user.id)
+
+  if (merchant_name) {
+    query = query.eq('merchant_name', merchant_name)
+  } else if (description) {
+    query = query.ilike('description', `%${description}%`)
+  } else {
+    return NextResponse.json({ error: 'merchant_name or description required' }, { status: 400 })
+  }
+
+  const { error } = await query
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
+}
+
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
