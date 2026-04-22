@@ -28,7 +28,7 @@ export default function Sidebar() {
   return (
     <aside className="fixed inset-y-0 left-0 w-52 bg-[#FAFAFA] border-r border-[#E5E7EB] flex flex-col z-30">
       <div className="px-5 py-5 border-b border-[#E5E7EB]">
-        <span className="text-lg font-bold text-[#111111] tracking-tight">Yenom</span>
+        <Link href="/dashboard" className="text-lg font-bold text-[#111111] tracking-tight hover:opacity-70 transition-opacity">Yenom</Link>
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-0.5">
