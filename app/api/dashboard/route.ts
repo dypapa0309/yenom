@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { buildDashboardData } from '@/lib/analytics/stats'
 import { detectRecurring } from '@/lib/analytics/recurring'
 import { currentMonth } from '@/lib/utils/format'
+import { getHouseholdContext } from '@/lib/supabase/household'
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient()
@@ -12,12 +13,14 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const month = searchParams.get('month') ?? currentMonth()
 
-  // Load all transactions (last 6 months for trend calculation)
   const [year, mon] = month.split('-').map(Number)
   const sixMonthsAgo = new Date(year, mon - 7, 1)
   const startDate = `${sixMonthsAgo.getFullYear()}-${String(sixMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`
 
-  const { data: transactions, error } = await supabase
+  const hCtx = await getHouseholdContext(supabase, user.id)
+
+  // 본인 데이터
+  const { data: ownTxs, error } = await supabase
     .from('transactions')
     .select('*')
     .eq('user_id', user.id)
@@ -26,11 +29,26 @@ export async function GET(request: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  const dashboardData = buildDashboardData(transactions ?? [], month)
+  // 파트너 데이터 (공유된 카테고리만)
+  let partnerTxs: typeof ownTxs = []
+  for (const partnerId of hCtx.partnerIds) {
+    const visibleCategories = hCtx.partnerVisibility[partnerId] ?? []
+    if (visibleCategories.length === 0) continue
+    const { data } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', partnerId)
+      .in('category', visibleCategories)
+      .gte('transaction_date', startDate)
+      .order('transaction_date', { ascending: true })
+    partnerTxs = [...partnerTxs, ...(data ?? [])]
+  }
 
-  // Add recurring items
-  const monthTxs = (transactions ?? []).filter(t => t.transaction_date.startsWith(month))
-  dashboardData.recurringItems = detectRecurring(transactions ?? []).slice(0, 8)
+  const allTxs = [...(ownTxs ?? []), ...partnerTxs]
+    .sort((a, b) => a.transaction_date.localeCompare(b.transaction_date))
 
-  return NextResponse.json({ data: dashboardData, month })
+  const dashboardData = buildDashboardData(allTxs, month)
+  dashboardData.recurringItems = detectRecurring(allTxs).slice(0, 8)
+
+  return NextResponse.json({ data: dashboardData, month, isShared: hCtx.partnerIds.length > 0 })
 }

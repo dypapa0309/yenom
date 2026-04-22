@@ -5,6 +5,18 @@ import { CATEGORIES, Category, UserRule } from '@/types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
+
+interface HouseholdMember {
+  user_id: string
+  role: string
+}
+
+interface VisibilityRow {
+  user_id: string
+  category: string
+  visible: boolean
+}
 
 export default function SettingsPage() {
   const [rules, setRules] = useState<UserRule[]>([])
@@ -14,6 +26,85 @@ export default function SettingsPage() {
   const [addText, setAddText] = useState('')
   const [addCategory, setAddCategory] = useState<Category | ''>('')
   const [adding, setAdding] = useState(false)
+
+  // Household state
+  const [household, setHousehold] = useState<{ id: string; name: string } | null>(null)
+  const [members, setMembers] = useState<HouseholdMember[]>([])
+  const [inviteLink, setInviteLink] = useState('')
+  const [inviteLoading, setInviteLoading] = useState(false)
+  const [inviteCopied, setInviteCopied] = useState(false)
+  const [visibility, setVisibility] = useState<VisibilityRow[]>([])
+  const [householdLoading, setHouseholdLoading] = useState(true)
+
+  const fetchHousehold = useCallback(async () => {
+    setHouseholdLoading(true)
+    try {
+      const [hRes, vRes] = await Promise.all([
+        fetch('/api/household'),
+        fetch('/api/household/visibility'),
+      ])
+      const hData = await hRes.json()
+      const vData = await vRes.json()
+      if (hData.data) {
+        setHousehold(hData.data.household)
+        setMembers(hData.data.members ?? [])
+      }
+      setVisibility(vData.data ?? [])
+    } catch {
+      // ignore
+    } finally {
+      setHouseholdLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchHousehold() }, [fetchHousehold])
+
+  async function generateInvite() {
+    setInviteLoading(true)
+    try {
+      const res = await fetch('/api/household/invite', { method: 'POST' })
+      const d = await res.json()
+      if (d.data?.token) {
+        const link = `${window.location.origin}/invite?token=${d.data.token}`
+        setInviteLink(link)
+      }
+    } finally {
+      setInviteLoading(false)
+    }
+  }
+
+  async function copyInvite() {
+    await navigator.clipboard.writeText(inviteLink)
+    setInviteCopied(true)
+    setTimeout(() => setInviteCopied(false), 2000)
+  }
+
+  async function leaveHousehold() {
+    if (!confirm('가족 그룹에서 탈퇴하시겠습니까?')) return
+    await fetch('/api/household', { method: 'DELETE' })
+    setHousehold(null)
+    setMembers([])
+    setInviteLink('')
+    setVisibility([])
+  }
+
+  function getVisibility(category: string): boolean {
+    const row = visibility.find(r => r.category === category)
+    if (!row) return true // 설정 없으면 전체 공유 기본값
+    return row.visible
+  }
+
+  async function toggleVisibility(category: string, visible: boolean) {
+    setVisibility(prev => {
+      const next = prev.filter(r => r.category !== category)
+      return [...next, { user_id: '', category, visible }]
+    })
+    await fetch('/api/household/visibility', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category, visible }),
+    })
+  }
 
   const fetchRules = useCallback(async () => {
     setLoading(true)
@@ -59,8 +150,95 @@ export default function SettingsPage() {
   const merchantRules = rules.filter(r => r.merchant_name)
 
   return (
-    <div>
-      <h1 className="text-2xl font-bold text-[#111111] tracking-tight mb-6">설정</h1>
+    <div className="space-y-8">
+      <h1 className="text-2xl font-bold text-[#111111] tracking-tight">설정</h1>
+
+      {/* Household section */}
+      <div>
+        <h2 className="text-base font-semibold text-[#111111] mb-3">가족 그룹</h2>
+        {householdLoading ? (
+          <div className="flex items-center justify-center h-16 bg-white border border-[#E5E7EB] rounded-xl">
+            <div className="w-4 h-4 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : household && members.length >= 2 ? (
+          // Has partner
+          <div className="grid grid-cols-3 gap-5">
+            <div className="col-span-2 space-y-4">
+              <div className="bg-white border border-[#E5E7EB] rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="text-sm font-semibold text-[#111111]">{household.name}</p>
+                    <p className="text-xs text-[#9CA3AF] mt-0.5">멤버 {members.length}명</p>
+                  </div>
+                  <button
+                    onClick={leaveHousehold}
+                    className="text-xs text-[#9CA3AF] hover:text-red-500 transition-colors"
+                  >
+                    그룹 탈퇴
+                  </button>
+                </div>
+                <div className="space-y-1 pt-2 border-t border-[#F3F4F6]">
+                  {members.map((m, i) => (
+                    <div key={m.user_id} className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-[#F3F4F6] flex items-center justify-center text-xs text-[#6B7280]">
+                        {i + 1}
+                      </div>
+                      <span className="text-xs text-[#374151]">
+                        {m.role === 'owner' ? '방장' : '멤버'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="bg-white border border-[#E5E7EB] rounded-xl p-4">
+              <h3 className="text-sm font-semibold text-[#111111] mb-1">내 카테고리 공유 설정</h3>
+              <p className="text-xs text-[#9CA3AF] mb-3 leading-relaxed">파트너에게 보여줄 카테고리를 선택하세요.</p>
+              <div className="space-y-2">
+                {CATEGORIES.map(cat => (
+                  <div key={cat} className="flex items-center justify-between">
+                    <span className="text-xs text-[#374151]">{cat}</span>
+                    <Switch
+                      checked={getVisibility(cat)}
+                      onCheckedChange={v => toggleVisibility(cat, v)}
+                      className="scale-75"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          // No partner yet
+          <div className="bg-white border border-[#E5E7EB] rounded-xl p-5 max-w-md">
+            <p className="text-sm text-[#374151] mb-4">
+              파트너를 초대하면 카테고리별로 가계부를 함께 볼 수 있습니다.
+            </p>
+            {inviteLink ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg px-3 py-2">
+                  <span className="text-xs text-[#374151] truncate flex-1 font-mono">{inviteLink}</span>
+                  <button
+                    onClick={copyInvite}
+                    className="text-xs text-[#2563EB] hover:text-[#1D4ED8] whitespace-nowrap transition-colors"
+                  >
+                    {inviteCopied ? '복사됨' : '복사'}
+                  </button>
+                </div>
+                <p className="text-xs text-[#9CA3AF]">링크를 파트너에게 공유하세요. 24시간 유효합니다.</p>
+              </div>
+            ) : (
+              <Button
+                onClick={generateInvite}
+                disabled={inviteLoading}
+                className="bg-[#111111] hover:bg-[#333333] text-white text-sm h-9"
+              >
+                {inviteLoading ? '생성 중...' : '초대 링크 생성'}
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-3 gap-5">
         {/* Rules list */}

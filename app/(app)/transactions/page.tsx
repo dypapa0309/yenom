@@ -85,16 +85,27 @@ export default function TransactionsPage() {
     setEditingId(null)
   }
 
+  function bulkBody(tx: Transaction, updates: Record<string, unknown>) {
+    return tx.merchant_name
+      ? { merchant_name: tx.merchant_name, ...updates }
+      : { description: tx.description, ...updates }
+  }
+
   async function excludeAllByMerchant(tx: Transaction) {
-    const key = tx.merchant_name ?? tx.description
     await fetch('/api/transactions', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(
-        tx.merchant_name
-          ? { merchant_name: tx.merchant_name, excluded: true }
-          : { description: tx.description, excluded: true }
-      ),
+      body: JSON.stringify(bulkBody(tx, { excluded: true })),
+    })
+    setEditingId(null)
+    fetchTransactions()
+  }
+
+  async function moveAllToCategory(tx: Transaction) {
+    await fetch('/api/transactions', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(bulkBody(tx, { category: editCategory })),
     })
     setEditingId(null)
     fetchTransactions()
@@ -295,21 +306,32 @@ export default function TransactionsPage() {
                   </tr>
                   {editingId === tx.id && (
                     <tr className="bg-[#F9FAFB] border-b border-[#F3F4F6]">
-                      <td colSpan={7} className="px-4 py-2.5">
-                        <div className="flex items-center gap-3">
+                      <td colSpan={7} className="px-4 py-3">
+                        <div className="flex items-center gap-3 flex-wrap">
                           <label className="text-xs text-[#6B7280]">메모</label>
                           <Input
                             value={editMemo}
                             onChange={e => setEditMemo(e.target.value)}
                             placeholder="메모 입력..."
-                            className="h-6 text-xs max-w-sm"
+                            className="h-6 text-xs max-w-xs"
                           />
-                          <button
-                            onClick={() => excludeAllByMerchant(tx)}
-                            className="text-xs text-[#9CA3AF] hover:text-red-500 transition-colors whitespace-nowrap ml-auto"
-                          >
-                            &apos;{tx.merchant_name ?? tx.description}&apos; 전체 제외
-                          </button>
+                          <div className="ml-auto flex items-center gap-2">
+                            <span className="text-xs text-[#9CA3AF]">
+                              &apos;{tx.merchant_name ?? tx.description}&apos; 전체
+                            </span>
+                            <button
+                              onClick={() => moveAllToCategory(tx)}
+                              className="text-xs text-[#2563EB] hover:text-[#1D4ED8] transition-colors whitespace-nowrap border border-[#DBEAFE] bg-[#EFF6FF] rounded px-2 py-0.5"
+                            >
+                              → {editCategory} 이동
+                            </button>
+                            <button
+                              onClick={() => excludeAllByMerchant(tx)}
+                              className="text-xs text-[#9CA3AF] hover:text-red-500 transition-colors whitespace-nowrap border border-[#E5E7EB] rounded px-2 py-0.5"
+                            >
+                              전체 제외
+                            </button>
+                          </div>
                         </div>
                       </td>
                     </tr>
