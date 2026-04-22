@@ -15,6 +15,7 @@ export default function SignupPage() {
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [done, setDone] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -40,8 +41,36 @@ export default function SignupPage() {
       return
     }
 
-    router.push('/dashboard')
-    router.refresh()
+    setDone(true)
+  }
+
+  if (done) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#FAFAFA]">
+        <div className="w-full max-w-sm text-center">
+          <h1 className="text-2xl font-bold text-[#111111] tracking-tight mb-8">Yenom</h1>
+          <div className="bg-white border border-[#E5E7EB] rounded-xl p-8">
+            <div className="w-12 h-12 rounded-full bg-[#DCFCE7] flex items-center justify-center mx-auto mb-4">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2.5">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+            </div>
+            <p className="text-base font-semibold text-[#111111] mb-2">이메일을 확인해주세요</p>
+            <p className="text-sm text-[#6B7280]">
+              <span className="font-medium text-[#111111]">{email}</span>로<br />
+              인증 링크를 보냈습니다.<br />
+              메일의 링크를 클릭하면 로그인할 수 있습니다.
+            </p>
+            <button
+              onClick={() => router.push('/login')}
+              className="mt-6 text-sm text-[#2563EB] hover:underline"
+            >
+              로그인 페이지로 이동
+            </button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
