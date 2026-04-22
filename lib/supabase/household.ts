@@ -23,49 +23,55 @@ export async function getHouseholdContext(
     partnerVisibility: {},
   }
 
-  // 속한 household 찾기
-  const { data: membership } = await supabase
-    .from('household_members')
-    .select('household_id')
-    .eq('user_id', userId)
-    .maybeSingle()
+  try {
+    // 속한 household 찾기
+    const { data: membership, error: mErr } = await supabase
+      .from('household_members')
+      .select('household_id')
+      .eq('user_id', userId)
+      .maybeSingle()
 
-  if (!membership) return none
+    // 테이블 없거나 RLS 오류면 gracefully 종료
+    if (mErr || !membership) return none
 
-  const householdId = membership.household_id
+    const householdId = membership.household_id
 
-  // 모든 멤버 조회
-  const { data: members } = await supabase
-    .from('household_members')
-    .select('user_id')
-    .eq('household_id', householdId)
+    // 모든 멤버 조회
+    const { data: members, error: membersErr } = await supabase
+      .from('household_members')
+      .select('user_id')
+      .eq('household_id', householdId)
 
-  if (!members || members.length <= 1) return { ...none, householdId }
+    if (membersErr || !members || members.length <= 1) return { ...none, householdId }
 
-  const partnerIds = members.map(m => m.user_id).filter(id => id !== userId)
+    const partnerIds = members.map(m => m.user_id).filter(id => id !== userId)
+    if (partnerIds.length === 0) return { ...none, householdId }
 
-  // 파트너별 공유 카테고리 조회 (visible=true인 것만)
-  const { data: visibilityRows } = await supabase
-    .from('household_visibility')
-    .select('user_id, category, visible')
-    .eq('household_id', householdId)
-    .in('user_id', partnerIds)
+    // 파트너별 공유 카테고리 조회 (visible=true인 것만)
+    const { data: visibilityRows } = await supabase
+      .from('household_visibility')
+      .select('user_id, category, visible')
+      .eq('household_id', householdId)
+      .in('user_id', partnerIds)
 
-  const partnerVisibility: Record<string, string[]> = {}
-  for (const partnerId of partnerIds) {
-    const rows = visibilityRows?.filter(r => r.user_id === partnerId) ?? []
-    if (rows.length === 0) {
-      // 설정 없으면 전체 공유
-      partnerVisibility[partnerId] = [...CATEGORIES]
-    } else {
-      partnerVisibility[partnerId] = rows.filter(r => r.visible).map(r => r.category)
+    const partnerVisibility: Record<string, string[]> = {}
+    for (const partnerId of partnerIds) {
+      const rows = visibilityRows?.filter(r => r.user_id === partnerId) ?? []
+      if (rows.length === 0) {
+        partnerVisibility[partnerId] = [...CATEGORIES]
+      } else {
+        partnerVisibility[partnerId] = rows.filter(r => r.visible).map(r => r.category)
+      }
     }
-  }
 
-  return {
-    householdId,
-    memberIds: [userId, ...partnerIds],
-    partnerIds,
-    partnerVisibility,
+    return {
+      householdId,
+      memberIds: [userId, ...partnerIds],
+      partnerIds,
+      partnerVisibility,
+    }
+  } catch {
+    // household 테이블 미생성 등 예외 → 본인 데이터만
+    return none
   }
 }
