@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { CATEGORIES } from '@/types'
@@ -10,7 +10,7 @@ interface InviteInfo {
   household: { name: string }
 }
 
-export default function InvitePage() {
+function InviteContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const token = searchParams.get('token')
@@ -63,13 +63,8 @@ export default function InvitePage() {
         <div className="bg-white border border-[#E5E7EB] rounded-2xl p-8 max-w-sm w-full mx-4 text-center space-y-4">
           <div className="text-3xl font-bold text-[#111111]">Yenom</div>
           <p className="text-sm font-semibold text-[#111111]">가족 그룹에 합류했습니다</p>
-          <p className="text-xs text-[#6B7280]">
-            설정에서 공유할 카테고리를 선택할 수 있습니다.
-          </p>
-          <Button
-            onClick={() => router.push('/dashboard')}
-            className="w-full bg-[#111111] hover:bg-[#333333] text-white text-sm"
-          >
+          <p className="text-xs text-[#6B7280]">설정에서 공유할 카테고리를 선택할 수 있습니다.</p>
+          <Button onClick={() => router.push('/dashboard')} className="w-full bg-[#111111] hover:bg-[#333333] text-white text-sm">
             대시보드로 이동
           </Button>
         </div>
@@ -83,11 +78,7 @@ export default function InvitePage() {
         <div className="bg-white border border-[#E5E7EB] rounded-2xl p-8 max-w-sm w-full mx-4 text-center space-y-4">
           <div className="text-3xl font-bold text-[#111111]">Yenom</div>
           <p className="text-sm text-red-500">{error || '유효하지 않은 초대 링크입니다.'}</p>
-          <Button
-            onClick={() => router.push('/dashboard')}
-            variant="outline"
-            className="w-full text-sm"
-          >
+          <Button onClick={() => router.push('/dashboard')} variant="outline" className="w-full text-sm">
             대시보드로 이동
           </Button>
         </div>
@@ -124,22 +115,26 @@ export default function InvitePage() {
         </div>
 
         <div className="space-y-2">
-          <Button
-            onClick={accept}
-            disabled={accepting}
-            className="w-full bg-[#111111] hover:bg-[#333333] text-white text-sm"
-          >
+          <Button onClick={accept} disabled={accepting} className="w-full bg-[#111111] hover:bg-[#333333] text-white text-sm">
             {accepting ? '처리 중...' : '초대 수락'}
           </Button>
-          <Button
-            onClick={() => router.push('/dashboard')}
-            variant="outline"
-            className="w-full text-sm"
-          >
+          <Button onClick={() => router.push('/dashboard')} variant="outline" className="w-full text-sm">
             거절
           </Button>
         </div>
       </div>
     </div>
+  )
+}
+
+export default function InvitePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-[#F9FAFB]">
+        <div className="w-6 h-6 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <InviteContent />
+    </Suspense>
   )
 }
