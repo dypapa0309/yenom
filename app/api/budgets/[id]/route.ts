@@ -6,44 +6,54 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = await getSessionUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  try {
+    const user = await getSessionUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { id } = await params
-  const body = await request.json()
-  const { budget_amount } = body
+    const { id } = await params
+    const body = await request.json()
+    const { budget_amount } = body
 
-  if (!budget_amount || isNaN(Number(budget_amount))) {
-    return NextResponse.json({ error: 'Invalid amount' }, { status: 400 })
+    if (!budget_amount || isNaN(Number(budget_amount))) {
+      return NextResponse.json({ error: 'Invalid amount' }, { status: 400 })
+    }
+
+    const docRef = adminDb.collection('budgets').doc(id)
+    const doc = await docRef.get()
+
+    if (!doc.exists || doc.data()?.user_id !== user.uid) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+
+    await docRef.update({ budget_amount: Number(budget_amount) })
+    const updated = await docRef.get()
+    return NextResponse.json({ data: { id: updated.id, ...updated.data() } })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
-
-  const docRef = adminDb.collection('budgets').doc(id)
-  const doc = await docRef.get()
-
-  if (!doc.exists || doc.data()?.user_id !== user.uid) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  }
-
-  await docRef.update({ budget_amount: Number(budget_amount) })
-  const updated = await docRef.get()
-  return NextResponse.json({ data: { id: updated.id, ...updated.data() } })
 }
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = await getSessionUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  try {
+    const user = await getSessionUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { id } = await params
-  const docRef = adminDb.collection('budgets').doc(id)
-  const doc = await docRef.get()
+    const { id } = await params
+    const docRef = adminDb.collection('budgets').doc(id)
+    const doc = await docRef.get()
 
-  if (!doc.exists || doc.data()?.user_id !== user.uid) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (!doc.exists || doc.data()?.user_id !== user.uid) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+
+    await docRef.delete()
+    return NextResponse.json({ ok: true })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
-
-  await docRef.delete()
-  return NextResponse.json({ ok: true })
 }

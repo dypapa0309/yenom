@@ -92,73 +92,83 @@ export async function GET(request: NextRequest) {
 
 // merchant_name 또는 description 기준으로 전체 제외/복원
 export async function PATCH(request: NextRequest) {
-  const user = await getSessionUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  try {
+    const user = await getSessionUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const body = await request.json()
-  const { merchant_name, description } = body
+    const body = await request.json()
+    const { merchant_name, description } = body
 
-  const updates: Record<string, unknown> = {}
-  if ('excluded' in body) updates.excluded = body.excluded
-  if ('category' in body) updates.category = body.category
-  if (Object.keys(updates).length === 0) {
-    return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
-  }
+    const updates: Record<string, unknown> = {}
+    if ('excluded' in body) updates.excluded = body.excluded
+    if ('category' in body) updates.category = body.category
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
+    }
 
-  let query: FirebaseFirestore.Query = adminDb
-    .collection('transactions')
-    .where('user_id', '==', user.uid)
+    let query: FirebaseFirestore.Query = adminDb
+      .collection('transactions')
+      .where('user_id', '==', user.uid)
 
-  if (merchant_name) {
-    query = query.where('merchant_name', '==', merchant_name)
-  } else if (description) {
-    // Firestore doesn't support ILIKE, fetch all user's transactions and filter
+    if (merchant_name) {
+      query = query.where('merchant_name', '==', merchant_name)
+    } else if (description) {
+      // Firestore doesn't support ILIKE, fetch all user's transactions and filter
+      const snap = await query.get()
+      const lower = description.toLowerCase()
+      const matching = snap.docs.filter(d =>
+        d.data().description?.toLowerCase().includes(lower)
+      )
+      const batch = adminDb.batch()
+      matching.forEach(d => batch.update(d.ref, updates))
+      await batch.commit()
+      return NextResponse.json({ ok: true })
+    } else {
+      return NextResponse.json({ error: 'merchant_name or description required' }, { status: 400 })
+    }
+
     const snap = await query.get()
-    const lower = description.toLowerCase()
-    const matching = snap.docs.filter(d =>
-      d.data().description?.toLowerCase().includes(lower)
-    )
     const batch = adminDb.batch()
-    matching.forEach(d => batch.update(d.ref, updates))
+    snap.docs.forEach(d => batch.update(d.ref, updates))
     await batch.commit()
+
     return NextResponse.json({ ok: true })
-  } else {
-    return NextResponse.json({ error: 'merchant_name or description required' }, { status: 400 })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
-
-  const snap = await query.get()
-  const batch = adminDb.batch()
-  snap.docs.forEach(d => batch.update(d.ref, updates))
-  await batch.commit()
-
-  return NextResponse.json({ ok: true })
 }
 
 export async function POST(request: NextRequest) {
-  const user = await getSessionUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  try {
+    const user = await getSessionUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const body = await request.json()
-  const { transaction_date, description, amount, type, category, memo, merchant_name } = body
+    const body = await request.json()
+    const { transaction_date, description, amount, type, category, memo, merchant_name } = body
 
-  if (!transaction_date || !description || !amount || !type || !category) {
-    return NextResponse.json({ error: 'Required fields missing' }, { status: 400 })
+    if (!transaction_date || !description || !amount || !type || !category) {
+      return NextResponse.json({ error: 'Required fields missing' }, { status: 400 })
+    }
+
+    const ref = await adminDb.collection('transactions').add({
+      user_id: user.uid,
+      upload_id: null,
+      transaction_date,
+      description,
+      amount: Number(amount),
+      type,
+      category,
+      merchant_name: merchant_name ?? null,
+      memo: memo ?? null,
+      excluded: false,
+      created_at: new Date().toISOString(),
+    })
+
+    const doc = await ref.get()
+    return NextResponse.json({ data: { id: doc.id, ...doc.data() } })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
-
-  const ref = await adminDb.collection('transactions').add({
-    user_id: user.uid,
-    upload_id: null,
-    transaction_date,
-    description,
-    amount: Number(amount),
-    type,
-    category,
-    merchant_name: merchant_name ?? null,
-    memo: memo ?? null,
-    excluded: false,
-    created_at: new Date().toISOString(),
-  })
-
-  const doc = await ref.get()
-  return NextResponse.json({ data: { id: doc.id, ...doc.data() } })
 }
