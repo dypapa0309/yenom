@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { generateInsights } from '@/lib/insights/generator'
 import { calcCategoryStats, calcMonthlyStats, calcSmallTransactions, calcWeekendVsWeekday } from '@/lib/analytics/stats'
 import { detectRecurring } from '@/lib/analytics/recurring'
+import { generateTaxInsights } from '@/lib/tax/tax-insights'
 import { formatKRW, formatPercent, currentMonth } from '@/lib/utils/format'
 import { Transaction } from '@/types'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
@@ -50,6 +51,8 @@ export default function InsightsPage() {
   const prevTxs = allTxs.filter(t => t.transaction_date.startsWith(prevMonth))
 
   const insights = generateInsights(currentTxs, prevTxs, month)
+  const yearTxs = allTxs.filter(t => t.transaction_date.startsWith(month.slice(0, 4)))
+  const taxInsights = generateTaxInsights(yearTxs)
   const categoryStats = calcCategoryStats(currentTxs)
   const prevCategoryStats = calcCategoryStats(prevTxs)
   const recurring = detectRecurring(allTxs)
@@ -123,14 +126,24 @@ export default function InsightsPage() {
         {/* Insights list */}
         <div className="col-span-2 space-y-2.5">
           <h2 className="text-sm font-semibold text-[#374151] mb-3">소비 패턴 분석</h2>
-          {insights.length === 0 ? (
+          {insights.length === 0 && taxInsights.length === 0 ? (
             <div className="text-sm text-[#9CA3AF] py-6 text-center bg-white border border-[#E5E7EB] rounded-xl">
               이번 달 특이 패턴이 감지되지 않았습니다.
             </div>
           ) : (
-            insights.map(insight => (
-              <InsightCard key={insight.id} insight={insight} />
-            ))
+            <>
+              {insights.map(insight => (
+                <InsightCard key={insight.id} insight={insight} />
+              ))}
+              {taxInsights.length > 0 && (
+                <>
+                  <h3 className="text-xs font-semibold text-[#6B7280] mt-4 mb-2">절세 알림</h3>
+                  {taxInsights.map(insight => (
+                    <InsightCard key={insight.id} insight={insight} />
+                  ))}
+                </>
+              )}
+            </>
           )}
         </div>
 

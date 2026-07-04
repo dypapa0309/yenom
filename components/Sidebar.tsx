@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: '/transactions', label: '거래내역' },
   { href: '/insights', label: '인사이트' },
   { href: '/budgets', label: '예산' },
+  { href: '/tax', label: '절세' },
   { href: '/calendar', label: '캘린더' },
   { href: '/settings', label: '설정' },
 ]
