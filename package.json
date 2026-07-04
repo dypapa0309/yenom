@@ -37,6 +37,9 @@
     "xlsx": "^0.18.5",
     "zod": "^4.3.6"
   },
+  "overrides": {
+    "jose": "^4.15.9"
+  },
   "devDependencies": {
     "@netlify/plugin-nextjs": "^5.15.9",
     "@tailwindcss/postcss": "^4",
