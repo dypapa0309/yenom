@@ -12,11 +12,19 @@ export async function GET() {
   // 2. Firebase Admin init
   try {
     const { adminAuth } = await import('@/lib/firebase/admin')
-    // Try a simple operation
     await adminAuth.listUsers(1)
     checks.firebaseAdmin = 'OK'
   } catch (e) {
     checks.firebaseAdmin = `ERROR: ${e instanceof Error ? e.message : String(e)}`
+  }
+
+  // 3. Firestore read test
+  try {
+    const { adminDb } = await import('@/lib/firebase/admin')
+    const snap = await adminDb.collection('uploads').limit(1).get()
+    checks.firestore = `OK (${snap.size} docs)`
+  } catch (e) {
+    checks.firestore = `ERROR: ${e instanceof Error ? e.message : String(e)}`
   }
 
   return NextResponse.json({ status: 'ok', checks })
