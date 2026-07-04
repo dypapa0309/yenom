@@ -1,84 +1,96 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/firebase/auth-session'
+import { adminDb } from '@/lib/firebase/admin'
+import { randomUUID } from 'crypto'
 
 // 초대 링크 생성
 export async function POST() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getSessionUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   // household가 없으면 자동 생성
-  let { data: membership } = await supabase
-    .from('household_members')
-    .select('household_id')
-    .eq('user_id', user.id)
-    .maybeSingle()
+  let memberSnap = await adminDb
+    .collection('household_members')
+    .where('user_id', '==', user.uid)
+    .limit(1)
+    .get()
 
-  if (!membership) {
-    const { data: household } = await supabase
-      .from('households')
-      .insert({ name: '우리 가계부', created_by: user.id })
-      .select()
-      .single()
+  let householdId: string
 
-    if (!household) return NextResponse.json({ error: 'Failed to create household' }, { status: 500 })
-
-    await supabase.from('household_members').insert({
-      household_id: household.id,
-      user_id: user.id,
-      role: 'owner',
+  if (memberSnap.empty) {
+    const householdRef = await adminDb.collection('households').add({
+      name: '우리 가계부',
+      created_by: user.uid,
+      created_at: new Date().toISOString(),
     })
+    householdId = householdRef.id
 
-    membership = { household_id: household.id }
+    await adminDb.collection('household_members').add({
+      household_id: householdId,
+      user_id: user.uid,
+      role: 'owner',
+      joined_at: new Date().toISOString(),
+    })
+  } else {
+    householdId = memberSnap.docs[0].data().household_id
   }
 
   // 멤버가 이미 2명이면 더 초대 불가
-  const { data: members } = await supabase
-    .from('household_members')
-    .select('user_id')
-    .eq('household_id', membership.household_id)
+  const allMembersSnap = await adminDb
+    .collection('household_members')
+    .where('household_id', '==', householdId)
+    .get()
 
-  if ((members?.length ?? 0) >= 2) {
+  if (allMembersSnap.size >= 2) {
     return NextResponse.json({ error: '이미 파트너가 있습니다.' }, { status: 400 })
   }
 
-  // 기존 pending 초대 삭제 후 새로 생성
-  await supabase.from('household_invites')
-    .delete()
-    .eq('household_id', membership.household_id)
-    .eq('status', 'pending')
+  // 기존 pending 초대 삭제
+  const pendingSnap = await adminDb
+    .collection('household_invites')
+    .where('household_id', '==', householdId)
+    .where('status', '==', 'pending')
+    .get()
 
-  const { data: invite, error } = await supabase
-    .from('household_invites')
-    .insert({ household_id: membership.household_id, invited_by: user.id })
-    .select()
-    .single()
+  const batch = adminDb.batch()
+  pendingSnap.docs.forEach(d => batch.delete(d.ref))
+  await batch.commit()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // 새 초대 생성
+  const token = randomUUID()
+  await adminDb.collection('household_invites').add({
+    household_id: householdId,
+    invited_by: user.uid,
+    token,
+    status: 'pending',
+    created_at: new Date().toISOString(),
+  })
 
-  return NextResponse.json({ data: { token: invite.token } })
+  return NextResponse.json({ data: { token } })
 }
 
-// 초대 토큰으로 정보 조회 (수락 전 미리보기)
+// 초대 토큰으로 정보 조회
 export async function GET(request: NextRequest) {
-  const supabase = await createClient()
   const token = request.nextUrl.searchParams.get('token')
   if (!token) return NextResponse.json({ error: 'token required' }, { status: 400 })
 
-  const { data: invite } = await supabase
-    .from('household_invites')
-    .select('id, household_id, status, created_at, invited_by')
-    .eq('token', token)
-    .maybeSingle()
+  const inviteSnap = await adminDb
+    .collection('household_invites')
+    .where('token', '==', token)
+    .limit(1)
+    .get()
 
-  if (!invite) return NextResponse.json({ error: '유효하지 않은 초대 링크입니다.' }, { status: 404 })
-  if (invite.status !== 'pending') return NextResponse.json({ error: '이미 사용된 초대 링크입니다.' }, { status: 400 })
+  if (inviteSnap.empty) {
+    return NextResponse.json({ error: '유효하지 않은 초대 링크입니다.' }, { status: 404 })
+  }
 
-  const { data: household } = await supabase
-    .from('households')
-    .select('name')
-    .eq('id', invite.household_id)
-    .single()
+  const invite = inviteSnap.docs[0].data()
+  if (invite.status !== 'pending') {
+    return NextResponse.json({ error: '이미 사용된 초대 링크입니다.' }, { status: 400 })
+  }
+
+  const householdDoc = await adminDb.collection('households').doc(invite.household_id).get()
+  const household = householdDoc.exists ? { name: householdDoc.data()?.name } : null
 
   return NextResponse.json({ data: { invite, household } })
 }

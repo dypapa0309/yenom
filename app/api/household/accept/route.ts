@@ -1,52 +1,61 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/firebase/auth-session'
+import { adminDb } from '@/lib/firebase/admin'
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getSessionUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { token } = await request.json()
   if (!token) return NextResponse.json({ error: 'token required' }, { status: 400 })
 
   // 초대 확인
-  const { data: invite } = await supabase
-    .from('household_invites')
-    .select('id, household_id, invited_by, status')
-    .eq('token', token)
-    .maybeSingle()
+  const inviteSnap = await adminDb
+    .collection('household_invites')
+    .where('token', '==', token)
+    .limit(1)
+    .get()
 
-  if (!invite) return NextResponse.json({ error: '유효하지 않은 초대 링크입니다.' }, { status: 404 })
-  if (invite.status !== 'pending') return NextResponse.json({ error: '이미 사용된 초대 링크입니다.' }, { status: 400 })
-  if (invite.invited_by === user.id) return NextResponse.json({ error: '본인이 만든 초대 링크입니다.' }, { status: 400 })
+  if (inviteSnap.empty) {
+    return NextResponse.json({ error: '유효하지 않은 초대 링크입니다.' }, { status: 404 })
+  }
+
+  const inviteDoc = inviteSnap.docs[0]
+  const invite = inviteDoc.data()
+
+  if (invite.status !== 'pending') {
+    return NextResponse.json({ error: '이미 사용된 초대 링크입니다.' }, { status: 400 })
+  }
+  if (invite.invited_by === user.uid) {
+    return NextResponse.json({ error: '본인이 만든 초대 링크입니다.' }, { status: 400 })
+  }
 
   // 이미 다른 household에 속해있으면 탈퇴 처리
-  const { data: existing } = await supabase
-    .from('household_members')
-    .select('household_id, role')
-    .eq('user_id', user.id)
-    .maybeSingle()
+  const existingSnap = await adminDb
+    .collection('household_members')
+    .where('user_id', '==', user.uid)
+    .limit(1)
+    .get()
 
-  if (existing) {
-    await supabase.from('household_members').delete()
-      .eq('user_id', user.id).eq('household_id', existing.household_id)
-    if (existing.role === 'owner') {
-      await supabase.from('households').delete().eq('id', existing.household_id)
+  if (!existingSnap.empty) {
+    const existing = existingSnap.docs[0]
+    const existingData = existing.data()
+    await existing.ref.delete()
+    if (existingData.role === 'owner') {
+      await adminDb.collection('households').doc(existingData.household_id).delete()
     }
   }
 
   // 멤버 추가
-  const { error: joinError } = await supabase.from('household_members').insert({
+  await adminDb.collection('household_members').add({
     household_id: invite.household_id,
-    user_id: user.id,
+    user_id: user.uid,
     role: 'member',
+    joined_at: new Date().toISOString(),
   })
-  if (joinError) return NextResponse.json({ error: joinError.message }, { status: 500 })
 
   // 초대 상태 업데이트
-  await supabase.from('household_invites')
-    .update({ status: 'accepted' })
-    .eq('id', invite.id)
+  await inviteDoc.ref.update({ status: 'accepted' })
 
   return NextResponse.json({ ok: true, householdId: invite.household_id })
 }

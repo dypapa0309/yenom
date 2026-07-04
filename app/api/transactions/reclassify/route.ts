@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/firebase/auth-session'
+import { adminDb } from '@/lib/firebase/admin'
 import { enrichWithKakao } from '@/lib/categorization/kakao-classifier'
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getSessionUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   if (!process.env.KAKAO_REST_API_KEY) {
@@ -12,31 +12,31 @@ export async function POST(request: NextRequest) {
   }
 
   // Fetch all 기타 expense transactions for this user
-  const { data: txs, error } = await supabase
-    .from('transactions')
-    .select('id, merchant_name, description')
-    .eq('user_id', user.id)
-    .eq('category', '기타')
-    .eq('type', 'expense')
-    .eq('excluded', false)
+  const snap = await adminDb
+    .collection('transactions')
+    .where('user_id', '==', user.uid)
+    .where('category', '==', '기타')
+    .where('type', '==', 'expense')
+    .where('excluded', '==', false)
+    .get()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  if (!txs || txs.length === 0) return NextResponse.json({ updated: 0 })
+  if (snap.empty) return NextResponse.json({ updated: 0 })
+
+  const txs = snap.docs.map(d => ({
+    id: d.id,
+    merchant_name: d.data().merchant_name,
+    description: d.data().description,
+  }))
 
   const kakaoMap = await enrichWithKakao(txs)
-
   if (kakaoMap.size === 0) return NextResponse.json({ updated: 0 })
 
   // Batch update
-  const updates = Array.from(kakaoMap.entries()).map(([id, category]) =>
-    supabase
-      .from('transactions')
-      .update({ category })
-      .eq('id', id)
-      .eq('user_id', user.id)
-  )
-
-  await Promise.all(updates)
+  const batch = adminDb.batch()
+  for (const [id, category] of kakaoMap.entries()) {
+    batch.update(adminDb.collection('transactions').doc(id), { category })
+  }
+  await batch.commit()
 
   return NextResponse.json({ updated: kakaoMap.size })
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/firebase/auth-session'
+import { adminDb } from '@/lib/firebase/admin'
 import { parseFile, applyMapping } from '@/lib/parsing/excel-parser'
 import { classifyBatch } from '@/lib/categorization/classifier'
 import { detectColumns } from '@/lib/parsing/column-detector'
@@ -7,12 +8,8 @@ import { enrichWithKakao } from '@/lib/categorization/kakao-classifier'
 import { ColumnMapping } from '@/types'
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const user = await getSessionUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
     const formData = await request.formData()
@@ -33,34 +30,31 @@ export async function POST(request: NextRequest) {
       : detectColumns(headers)
 
     // Create upload record
-    const { data: upload, error: uploadError } = await supabase
-      .from('uploads')
-      .insert({
-        user_id: user.id,
-        filename: file.name,
-        source_type: file.name.endsWith('.csv') ? 'csv' : 'xlsx',
-      })
-      .select()
-      .single()
-
-    if (uploadError) throw uploadError
+    const uploadRef = await adminDb.collection('uploads').add({
+      user_id: user.uid,
+      filename: file.name,
+      uploaded_at: new Date().toISOString(),
+      source_type: file.name.endsWith('.csv') ? 'csv' : 'xlsx',
+    })
 
     // Parse transactions
     const parsed = applyMapping(rows, mapping)
 
     // Get user rules for classification
-    const { data: userRules } = await supabase
-      .from('user_rules')
-      .select('*')
-      .eq('user_id', user.id)
+    const rulesSnap = await adminDb
+      .collection('user_rules')
+      .where('user_id', '==', user.uid)
+      .get()
+    const userRules = rulesSnap.docs.map(d => ({ id: d.id, ...d.data() }))
 
     // Classify
-    const categories = classifyBatch(parsed, userRules ?? [])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const categories = classifyBatch(parsed, userRules as any)
 
     // Build transaction records
     const transactionRecords = parsed.map((t, i) => ({
-      user_id: user.id,
-      upload_id: upload.id,
+      user_id: user.uid,
+      upload_id: uploadRef.id,
       transaction_date: t.transaction_date,
       description: t.description,
       amount: t.amount,
@@ -69,33 +63,32 @@ export async function POST(request: NextRequest) {
       category: categories[i],
       excluded: false,
       memo: null,
+      created_at: new Date().toISOString(),
     }))
 
     const makeKey = (r: { transaction_date: string; amount: number; description: string }) =>
       `${r.transaction_date}|${r.amount}|${r.description}`
 
-    // Deduplicate against existing transactions (건수 기반)
-    // 같은 날 같은 금액 같은 적요가 DB에 N건 있으면, 신규 배치에서도 N건까지는 허용
+    // Deduplicate against existing transactions
     if (transactionRecords.length > 0) {
       const dates = transactionRecords.map(r => r.transaction_date)
       const minDate = dates.reduce((a, b) => (a < b ? a : b))
       const maxDate = dates.reduce((a, b) => (a > b ? a : b))
 
-      const { data: existing } = await supabase
-        .from('transactions')
-        .select('transaction_date, amount, description')
-        .eq('user_id', user.id)
-        .gte('transaction_date', minDate)
-        .lte('transaction_date', maxDate)
+      const existingSnap = await adminDb
+        .collection('transactions')
+        .where('user_id', '==', user.uid)
+        .where('transaction_date', '>=', minDate)
+        .where('transaction_date', '<=', maxDate)
+        .get()
 
-      // DB에 이미 있는 건수 집계
       const dbCounts = new Map<string, number>()
-      for (const e of existing ?? []) {
-        const k = makeKey(e)
+      for (const doc of existingSnap.docs) {
+        const e = doc.data()
+        const k = makeKey(e as { transaction_date: string; amount: number; description: string })
         dbCounts.set(k, (dbCounts.get(k) ?? 0) + 1)
       }
 
-      // 신규 배치에서 건수 초과분만 제거
       const usedCounts = new Map<string, number>()
       const before = transactionRecords.length
       const deduped = transactionRecords.filter(r => {
@@ -103,7 +96,7 @@ export async function POST(request: NextRequest) {
         const used = usedCounts.get(k) ?? 0
         const alreadyInDb = dbCounts.get(k) ?? 0
         usedCounts.set(k, used + 1)
-        return used >= alreadyInDb  // DB에 있는 것보다 많으면 허용
+        return used >= alreadyInDb
       })
       transactionRecords.splice(0, transactionRecords.length, ...deduped)
       const skipped = before - transactionRecords.length
@@ -111,8 +104,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (transactionRecords.length === 0) {
-      // 실제로 저장할 거래가 없으면 업로드 레코드도 삭제
-      await supabase.from('uploads').delete().eq('id', upload.id)
+      await uploadRef.delete()
       return NextResponse.json({ uploadId: null, count: 0, skipped: true })
     }
 
@@ -136,16 +128,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Insert in batches of 500
+    // Insert in batches of 500 (Firestore batch limit)
     const batchSize = 500
     for (let i = 0; i < transactionRecords.length; i += batchSize) {
-      const batch = transactionRecords.slice(i, i + batchSize)
-      const { error } = await supabase.from('transactions').insert(batch)
-      if (error) throw error
+      const chunk = transactionRecords.slice(i, i + batchSize)
+      const batch = adminDb.batch()
+      for (const record of chunk) {
+        const ref = adminDb.collection('transactions').doc()
+        batch.set(ref, record)
+      }
+      await batch.commit()
     }
 
     return NextResponse.json({
-      uploadId: upload.id,
+      uploadId: uploadRef.id,
       count: transactionRecords.length,
       headers,
       mapping,

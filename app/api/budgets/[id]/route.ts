@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/firebase/auth-session'
+import { adminDb } from '@/lib/firebase/admin'
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getSessionUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
@@ -17,34 +17,33 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid amount' }, { status: 400 })
   }
 
-  const { data, error } = await supabase
-    .from('budgets')
-    .update({ budget_amount: Number(budget_amount) })
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .select()
-    .single()
+  const docRef = adminDb.collection('budgets').doc(id)
+  const doc = await docRef.get()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ data })
+  if (!doc.exists || doc.data()?.user_id !== user.uid) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+
+  await docRef.update({ budget_amount: Number(budget_amount) })
+  const updated = await docRef.get()
+  return NextResponse.json({ data: { id: updated.id, ...updated.data() } })
 }
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getSessionUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
+  const docRef = adminDb.collection('budgets').doc(id)
+  const doc = await docRef.get()
 
-  const { error } = await supabase
-    .from('budgets')
-    .delete()
-    .eq('id', id)
-    .eq('user_id', user.id)
+  if (!doc.exists || doc.data()?.user_id !== user.uid) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  await docRef.delete()
   return NextResponse.json({ ok: true })
 }

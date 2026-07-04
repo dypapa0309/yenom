@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { signInWithEmailAndPassword } from 'firebase/auth'
+import { getClientAuth } from '@/lib/firebase/config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -20,17 +21,24 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
 
-    const supabase = createClient()
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    try {
+      const cred = await signInWithEmailAndPassword(getClientAuth(), email, password)
+      const idToken = await cred.user.getIdToken()
 
-    if (error) {
+      const res = await fetch('/api/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      })
+
+      if (!res.ok) throw new Error('Session creation failed')
+
+      router.push('/dashboard')
+      router.refresh()
+    } catch {
       setError('이메일 또는 비밀번호가 올바르지 않습니다.')
       setLoading(false)
-      return
     }
-
-    router.push('/dashboard')
-    router.refresh()
   }
 
   return (

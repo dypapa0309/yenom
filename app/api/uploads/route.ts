@@ -1,26 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUser } from '@/lib/firebase/auth-session'
+import { adminDb } from '@/lib/firebase/admin'
 
 // 업로드 목록 조회
 export async function GET() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getSessionUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { data, error } = await supabase
-    .from('uploads')
-    .select('id, filename, uploaded_at, source_type')
-    .eq('user_id', user.id)
-    .order('uploaded_at', { ascending: false })
+  const snap = await adminDb
+    .collection('uploads')
+    .where('user_id', '==', user.uid)
+    .orderBy('uploaded_at', 'desc')
+    .get()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const data = snap.docs.map(d => ({
+    id: d.id,
+    filename: d.data().filename,
+    uploaded_at: d.data().uploaded_at,
+    source_type: d.data().source_type,
+  }))
+
   return NextResponse.json({ data })
 }
 
-// 특정 업로드 삭제 (연결된 거래내역도 cascade 삭제)
+// 특정 업로드 삭제 (연결된 거래내역도 삭제)
 export async function DELETE(request: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getSessionUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(request.url)
@@ -28,19 +33,45 @@ export async function DELETE(request: NextRequest) {
 
   if (uploadId) {
     // 특정 업로드만 삭제
-    const { error } = await supabase
-      .from('uploads')
-      .delete()
-      .eq('id', uploadId)
-      .eq('user_id', user.id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    const docRef = adminDb.collection('uploads').doc(uploadId)
+    const doc = await docRef.get()
+    if (!doc.exists || doc.data()?.user_id !== user.uid) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+
+    // 연결된 거래내역 삭제
+    const txSnap = await adminDb
+      .collection('transactions')
+      .where('upload_id', '==', uploadId)
+      .where('user_id', '==', user.uid)
+      .get()
+
+    const batch = adminDb.batch()
+    txSnap.docs.forEach(d => batch.delete(d.ref))
+    batch.delete(docRef)
+    await batch.commit()
   } else {
     // 전체 삭제
-    const { error } = await supabase
-      .from('uploads')
-      .delete()
-      .eq('user_id', user.id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    const uploadsSnap = await adminDb
+      .collection('uploads')
+      .where('user_id', '==', user.uid)
+      .get()
+
+    const uploadIds = uploadsSnap.docs.map(d => d.id)
+
+    // 모든 거래내역 삭제
+    const txSnap = await adminDb
+      .collection('transactions')
+      .where('user_id', '==', user.uid)
+      .get()
+
+    // Batch delete in chunks of 500
+    const allDocs = [...txSnap.docs, ...uploadsSnap.docs]
+    for (let i = 0; i < allDocs.length; i += 500) {
+      const batch = adminDb.batch()
+      allDocs.slice(i, i + 500).forEach(d => batch.delete(d.ref))
+      await batch.commit()
+    }
   }
 
   return NextResponse.json({ ok: true })

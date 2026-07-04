@@ -1,25 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { getHouseholdContext } from '@/lib/supabase/household'
-
-const COLS = 'transaction_date, description, merchant_name, amount, type, category, memo, excluded'
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function applyFilters(q: any, month: string | null, category: string | null, type: string | null, search: string | null) {
-  if (month) {
-    const [y, m] = month.split('-').map(Number)
-    const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`
-    q = q.gte('transaction_date', `${month}-01`).lt('transaction_date', next)
-  }
-  if (category) q = q.eq('category', category)
-  if (type) q = q.eq('type', type)
-  if (search) q = q.ilike('description', `%${search}%`)
-  return q
-}
+import { getSessionUser } from '@/lib/firebase/auth-session'
+import { adminDb } from '@/lib/firebase/admin'
+import { getHouseholdContext } from '@/lib/firebase/household'
 
 export async function GET(request: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getSessionUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(request.url)
@@ -28,36 +13,71 @@ export async function GET(request: NextRequest) {
   const type = searchParams.get('type')
   const search = searchParams.get('search')
 
-  const hCtx = await getHouseholdContext(supabase, user.id)
+  const hCtx = await getHouseholdContext(user.uid)
 
-  const ownQ = applyFilters(
-    supabase.from('transactions').select(COLS).eq('user_id', user.id),
-    month, category, type, search
-  )
-  const { data: ownData, error } = await ownQ
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // 본인 데이터
+  let ownQuery: FirebaseFirestore.Query = adminDb
+    .collection('transactions')
+    .where('user_id', '==', user.uid)
 
+  if (month) {
+    const [y, m] = month.split('-').map(Number)
+    const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`
+    ownQuery = ownQuery
+      .where('transaction_date', '>=', `${month}-01`)
+      .where('transaction_date', '<', next)
+  }
+  if (category) ownQuery = ownQuery.where('category', '==', category)
+  if (type) ownQuery = ownQuery.where('type', '==', type)
+
+  const ownSnap = await ownQuery.get()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let ownData: any[] = ownSnap.docs.map(d => d.data())
+
+  if (search) {
+    const lower = search.toLowerCase()
+    ownData = ownData.filter(t => t.description?.toLowerCase().includes(lower))
+  }
+
+  // 파트너 데이터
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let partnerData: any[] = []
   for (const partnerId of hCtx.partnerIds) {
     const visibleCats = hCtx.partnerVisibility[partnerId] ?? []
     if (visibleCats.length === 0) continue
-    const pQ = applyFilters(
-      supabase.from('transactions').select(COLS).eq('user_id', partnerId).in('category', visibleCats),
-      month, category, type, search
-    )
-    const { data: pd } = await pQ
-    partnerData = [...partnerData, ...(pd ?? [])]
+
+    let pQuery: FirebaseFirestore.Query = adminDb
+      .collection('transactions')
+      .where('user_id', '==', partnerId)
+      .where('category', 'in', visibleCats.slice(0, 30))
+
+    if (month) {
+      const [y, m] = month.split('-').map(Number)
+      const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`
+      pQuery = pQuery
+        .where('transaction_date', '>=', `${month}-01`)
+        .where('transaction_date', '<', next)
+    }
+    if (type) pQuery = pQuery.where('type', '==', type)
+
+    const pSnap = await pQuery.get()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let pData: any[] = pSnap.docs.map(d => d.data())
+    if (category) pData = pData.filter(t => t.category === category)
+    if (search) {
+      const lower = search.toLowerCase()
+      pData = pData.filter(t => t.description?.toLowerCase().includes(lower))
+    }
+    partnerData = [...partnerData, ...pData]
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const data: any[] = [...(ownData ?? []), ...partnerData]
+  const data = [...ownData, ...partnerData]
     .sort((a, b) => b.transaction_date.localeCompare(a.transaction_date))
 
   const TYPE_KO: Record<string, string> = { income: '수입', expense: '지출', transfer: '이체' }
 
   const headers = ['날짜', '적요', '상호명', '금액', '유형', '카테고리', '메모', '제외여부']
-  const rows = (data ?? []).map(r => [
+  const rows = data.map(r => [
     r.transaction_date,
     `"${(r.description ?? '').replace(/"/g, '""')}"`,
     `"${(r.merchant_name ?? '').replace(/"/g, '""')}"`,
@@ -69,7 +89,7 @@ export async function GET(request: NextRequest) {
   ])
 
   const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
-  const bom = '﻿'
+  const bom = '\uFEFF'
 
   return new NextResponse(bom + csv, {
     headers: {

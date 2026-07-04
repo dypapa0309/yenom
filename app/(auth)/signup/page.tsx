@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth'
+import { getClientAuth } from '@/lib/firebase/config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -32,16 +33,26 @@ export default function SignupPage() {
     }
 
     setLoading(true)
-    const supabase = createClient()
-    const { error } = await supabase.auth.signUp({ email, password })
 
-    if (error) {
-      setError(error.message)
+    try {
+      const cred = await createUserWithEmailAndPassword(getClientAuth(), email, password)
+      await sendEmailVerification(cred.user)
+      setDone(true)
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'code' in err) {
+        const code = (err as { code: string }).code
+        if (code === 'auth/email-already-in-use') {
+          setError('이미 사용 중인 이메일입니다.')
+        } else if (code === 'auth/weak-password') {
+          setError('비밀번호가 너무 약합니다.')
+        } else {
+          setError('회원가입에 실패했습니다.')
+        }
+      } else {
+        setError('회원가입에 실패했습니다.')
+      }
       setLoading(false)
-      return
     }
-
-    setDone(true)
   }
 
   if (done) {
