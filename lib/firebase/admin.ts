@@ -15,11 +15,16 @@ function getApp(): App | null {
   }
 
   try {
+    // Handle both escaped and actual newlines in private key
+    const formattedKey = privateKey.includes('\\n')
+      ? privateKey.replace(/\\n/g, '\n')
+      : privateKey
+
     return initializeApp({
       credential: cert({
         projectId,
         clientEmail,
-        privateKey: privateKey.replace(/\\n/g, '\n'),
+        privateKey: formattedKey,
       }),
     })
   } catch (e) {

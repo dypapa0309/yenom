@@ -19,14 +19,15 @@ export async function createSessionCookie(idToken: string) {
 }
 
 export async function getSessionUser() {
-  const cookieStore = await cookies()
-  const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value
-  if (!sessionCookie) return null
-
   try {
+    const cookieStore = await cookies()
+    const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value
+    if (!sessionCookie) return null
+
     const decoded = await adminAuth.verifySessionCookie(sessionCookie, true)
     return decoded
   } catch {
+    // Firebase Admin init failure or invalid session — treat as unauthenticated
     return null
   }
 }
