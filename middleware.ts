@@ -11,6 +11,7 @@ export async function middleware(request: NextRequest) {
     request.nextUrl.pathname.startsWith('/transactions') ||
     request.nextUrl.pathname.startsWith('/insights') ||
     request.nextUrl.pathname.startsWith('/budgets') ||
+    request.nextUrl.pathname.startsWith('/tax') ||
     request.nextUrl.pathname.startsWith('/calendar') ||
     request.nextUrl.pathname.startsWith('/settings')
 

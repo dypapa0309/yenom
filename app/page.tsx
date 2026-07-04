@@ -2,7 +2,12 @@ import { redirect } from 'next/navigation'
 import { getSessionUser } from '@/lib/firebase/auth-session'
 
 export default async function Home() {
-  const user = await getSessionUser()
+  let user = null
+  try {
+    user = await getSessionUser()
+  } catch {
+    // Firebase Admin init may fail — treat as unauthenticated
+  }
 
   if (user) {
     redirect('/dashboard')
